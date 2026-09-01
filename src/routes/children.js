@@ -29,4 +29,27 @@ router.post('/:childId/pairing-code', async (req, res) => {
   }
 });
 
+router.get('/:childId/tasks', async (req, res) => {
+  try {
+    const { childId } = req.params;
+
+    const child = await pool.query('SELECT id FROM children WHERE id = $1', [childId]);
+    if (child.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'child not found' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, title, coin_value, status, created_at, completed_at, confirmed_at
+       FROM tasks
+       WHERE child_id = $1
+       ORDER BY created_at ASC`,
+      [childId]
+    );
+
+    res.json({ tasks: result.rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 module.exports = router;

@@ -6,6 +6,7 @@ const devRouter = require('./src/routes/dev');
 const familiesRouter = require('./src/routes/families');
 const childrenRouter = require('./src/routes/children');
 const pairingRouter = require('./src/routes/pairing');
+const tasksRouter = require('./src/routes/tasks');
 
 const app = express();
 const PORT = 3000;
@@ -30,6 +31,7 @@ app.use('/dev', devRouter);
 app.use('/families', familiesRouter);
 app.use('/children', childrenRouter);
 app.use('/pairing', pairingRouter);
+app.use('/tasks', tasksRouter);
 
 app.listen(PORT, HOST, () => {
   console.log(`poryadkin-api listening on ${HOST}:${PORT}`);
