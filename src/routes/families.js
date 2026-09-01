@@ -36,6 +36,7 @@ router.post('/:familyId/children/:childId/tasks', async (req, res) => {
     const { familyId, childId } = req.params;
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const coinValue = Number(req.body?.coin_value);
+    const recurrence = req.body?.recurrence === 'daily' ? 'daily' : 'one_time';
 
     if (!title) {
       return res.status(400).json({ status: 'error', message: 'title is required' });
@@ -55,10 +56,15 @@ router.post('/:familyId/children/:childId/tasks', async (req, res) => {
     }
 
     const id = randomUUID();
+    const isTemplate = recurrence === 'daily';
+
+    // 'daily' creates only the template row (is_template=true, occurrence_date
+    // NULL) — it's never shown to the child directly. GET /children/:childId/tasks
+    // generates the actual per-day occurrences from it on read.
     await pool.query(
-      `INSERT INTO tasks (id, child_id, family_id, title, coin_value, status)
-       VALUES ($1, $2, $3, $4, $5, 'assigned')`,
-      [id, childId, familyId, title, coinValue]
+      `INSERT INTO tasks (id, child_id, family_id, title, coin_value, status, recurrence, is_template)
+       VALUES ($1, $2, $3, $4, $5, 'assigned', $6, $7)`,
+      [id, childId, familyId, title, coinValue, recurrence, isTemplate]
     );
 
     res.status(201).json({ task_id: id });
