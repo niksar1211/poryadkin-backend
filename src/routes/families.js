@@ -5,6 +5,8 @@ const pool = require('../db');
 
 const router = express.Router();
 
+const RARITY_TIERS = ['Обычная', 'Редкая', 'Особая', 'Легендарная'];
+
 router.post('/:familyId/children', async (req, res) => {
   try {
     const { familyId } = req.params;
@@ -86,6 +88,61 @@ router.get('/:familyId/tasks/pending-confirmation', async (req, res) => {
       [familyId]
     );
     res.json({ tasks: result.rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.post('/:familyId/rewards', async (req, res) => {
+  try {
+    const { familyId } = req.params;
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const coinCost = Number(req.body?.coin_cost);
+    const rarityTier = req.body?.rarity_tier;
+
+    if (!title) {
+      return res.status(400).json({ status: 'error', message: 'title is required' });
+    }
+    if (!Number.isInteger(coinCost) || coinCost <= 0) {
+      return res
+        .status(400)
+        .json({ status: 'error', message: 'coin_cost must be a positive integer' });
+    }
+    if (!RARITY_TIERS.includes(rarityTier)) {
+      return res
+        .status(400)
+        .json({ status: 'error', message: `rarity_tier must be one of: ${RARITY_TIERS.join(', ')}` });
+    }
+
+    const family = await pool.query('SELECT id FROM families WHERE id = $1', [familyId]);
+    if (family.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'family not found' });
+    }
+
+    const id = randomUUID();
+    await pool.query(
+      `INSERT INTO rewards (id, family_id, title, coin_cost, rarity_tier)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [id, familyId, title, coinCost, rarityTier]
+    );
+
+    res.status(201).json({ reward_id: id });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.get('/:familyId/rewards', async (req, res) => {
+  try {
+    const { familyId } = req.params;
+    const result = await pool.query(
+      `SELECT id, title, coin_cost, rarity_tier, is_active, created_at
+       FROM rewards
+       WHERE family_id = $1 AND is_active = true
+       ORDER BY created_at ASC`,
+      [familyId]
+    );
+    res.json({ rewards: result.rows });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
