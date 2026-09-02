@@ -148,4 +148,27 @@ router.get('/:familyId/rewards', async (req, res) => {
   }
 });
 
+// Soft-delete only — coin_transactions.reward_id points at rewards, so a
+// redeemed-in-the-past reward must keep existing for that history to still
+// make sense. Deactivating just hides it from the parent's list and the
+// child's shop (both already filter on is_active = true).
+router.patch('/:familyId/rewards/:rewardId/deactivate', async (req, res) => {
+  try {
+    const { familyId, rewardId } = req.params;
+    const result = await pool.query(
+      `UPDATE rewards
+       SET is_active = false
+       WHERE id = $1 AND family_id = $2 AND is_active = true
+       RETURNING id`,
+      [rewardId, familyId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'reward not found' });
+    }
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 module.exports = router;
