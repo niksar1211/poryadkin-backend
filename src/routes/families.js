@@ -95,6 +95,24 @@ router.post('/:familyId/children/:childId/tasks', async (req, res) => {
   }
 });
 
+router.get('/:familyId/tasks', async (req, res) => {
+  try {
+    const { familyId } = req.params;
+    const result = await pool.query(
+      `SELECT t.id, t.child_id, c.name AS child_name, t.title, t.coin_value, t.status,
+              t.created_at, t.completed_at, t.confirmed_at
+       FROM tasks t
+       JOIN children c ON c.id = t.child_id
+       WHERE t.family_id = $1 AND t.is_template = false
+       ORDER BY t.created_at ASC`,
+      [familyId]
+    );
+    res.json({ tasks: result.rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 router.get('/:familyId/tasks/pending-confirmation', async (req, res) => {
   try {
     const { familyId } = req.params;
