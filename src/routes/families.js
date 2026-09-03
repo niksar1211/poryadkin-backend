@@ -8,6 +8,10 @@ const router = express.Router();
 
 const RARITY_TIERS = ['Обычная', 'Редкая', 'Особая', 'Легендарная'];
 
+// Must match the palette length in the frontend's src/theme/childColors.ts —
+// picked once at creation and stored, not recomputed on every read.
+const CHILD_COLOR_COUNT = 6;
+
 // Every route below is /:familyId/... — the token must belong to that
 // exact family. Mounted with the ':familyId' path (not a bare .use()) so
 // Express actually binds req.params.familyId before these run — an unpath'd
@@ -29,12 +33,12 @@ router.post('/:familyId/children', async (req, res) => {
     }
 
     const id = randomUUID();
-    await pool.query('INSERT INTO children (id, family_id, name) VALUES ($1, $2, $3)', [
-      id,
-      familyId,
-      name,
-    ]);
-    res.status(201).json({ child_id: id });
+    const colorKey = Math.floor(Math.random() * CHILD_COLOR_COUNT);
+    await pool.query(
+      'INSERT INTO children (id, family_id, name, color_key) VALUES ($1, $2, $3, $4)',
+      [id, familyId, name, colorKey]
+    );
+    res.status(201).json({ child_id: id, color_key: colorKey });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
@@ -44,7 +48,7 @@ router.get('/:familyId/children', async (req, res) => {
   try {
     const { familyId } = req.params;
     const result = await pool.query(
-      'SELECT id, name, created_at FROM children WHERE family_id = $1 ORDER BY created_at ASC',
+      'SELECT id, name, created_at, color_key FROM children WHERE family_id = $1 ORDER BY created_at ASC',
       [familyId]
     );
     res.json({ children: result.rows });
