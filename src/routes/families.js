@@ -148,6 +148,62 @@ router.get('/:familyId/rewards', async (req, res) => {
   }
 });
 
+// Partial update of title/coin_cost only. rarity_tier and is_active are
+// intentionally out of scope here — they have (or will have) their own
+// dedicated endpoints/logic.
+router.patch('/:familyId/rewards/:rewardId', async (req, res) => {
+  try {
+    const { familyId, rewardId } = req.params;
+    const hasTitle = typeof req.body?.title === 'string';
+    const hasCoinCost = req.body?.coin_cost !== undefined;
+
+    if (!hasTitle && !hasCoinCost) {
+      return res.status(400).json({ status: 'error', message: 'nothing to update' });
+    }
+
+    const title = hasTitle ? req.body.title.trim() : undefined;
+    if (hasTitle && !title) {
+      return res.status(400).json({ status: 'error', message: 'title is required' });
+    }
+
+    const coinCost = hasCoinCost ? Number(req.body.coin_cost) : undefined;
+    if (hasCoinCost && (!Number.isInteger(coinCost) || coinCost <= 0)) {
+      return res
+        .status(400)
+        .json({ status: 'error', message: 'coin_cost must be a positive integer' });
+    }
+
+    const setClauses = [];
+    const values = [];
+    let i = 1;
+    if (hasTitle) {
+      setClauses.push(`title = $${i++}`);
+      values.push(title);
+    }
+    if (hasCoinCost) {
+      setClauses.push(`coin_cost = $${i++}`);
+      values.push(coinCost);
+    }
+    values.push(rewardId, familyId);
+
+    const result = await pool.query(
+      `UPDATE rewards
+       SET ${setClauses.join(', ')}
+       WHERE id = $${i++} AND family_id = $${i++} AND is_active = true
+       RETURNING id, title, coin_cost, rarity_tier, is_active, created_at`,
+      values
+    );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'reward not found' });
+    }
+
+    res.json({ reward: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 // Soft-delete only — coin_transactions.reward_id points at rewards, so a
 // redeemed-in-the-past reward must keep existing for that history to still
 // make sense. Deactivating just hides it from the parent's list and the
