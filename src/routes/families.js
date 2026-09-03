@@ -44,7 +44,7 @@ router.get('/:familyId/children', async (req, res) => {
   try {
     const { familyId } = req.params;
     const result = await pool.query(
-      'SELECT id, name FROM children WHERE family_id = $1 ORDER BY created_at ASC',
+      'SELECT id, name, created_at FROM children WHERE family_id = $1 ORDER BY created_at ASC',
       [familyId]
     );
     res.json({ children: result.rows });
