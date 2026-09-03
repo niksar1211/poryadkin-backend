@@ -2,8 +2,15 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 
 const pool = require('../db');
+const { authenticate, requireTaskOwnership } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Every route below is /:taskId/... — there's no family_id/child_id in the
+// URL to compare directly, so requireTaskOwnership resolves ownership by
+// looking the task up first. Mounted with the ':taskId' path (not a bare
+// .use()) so Express actually binds req.params.taskId before these run.
+router.use('/:taskId', authenticate, requireTaskOwnership);
 
 router.patch('/:taskId/complete', async (req, res) => {
   try {

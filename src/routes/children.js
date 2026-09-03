@@ -2,8 +2,15 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 
 const pool = require('../db');
+const { authenticate, requireChildParam } = require('../middleware/auth');
 
 const router = express.Router();
+
+// Every route below is /:childId/... — a child token must match that exact
+// child; a parent token must own it through family membership. Mounted
+// with the ':childId' path (not a bare .use()) so Express actually binds
+// req.params.childId before these run.
+router.use('/:childId', authenticate, requireChildParam);
 
 router.post('/:childId/pairing-code', async (req, res) => {
   try {

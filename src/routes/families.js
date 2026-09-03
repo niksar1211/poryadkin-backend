@@ -2,10 +2,17 @@ const express = require('express');
 const { randomUUID } = require('crypto');
 
 const pool = require('../db');
+const { authenticate, requireFamilyParam } = require('../middleware/auth');
 
 const router = express.Router();
 
 const RARITY_TIERS = ['Обычная', 'Редкая', 'Особая', 'Легендарная'];
+
+// Every route below is /:familyId/... — the token must belong to that
+// exact family. Mounted with the ':familyId' path (not a bare .use()) so
+// Express actually binds req.params.familyId before these run — an unpath'd
+// .use() runs before route matching, leaving req.params empty.
+router.use('/:familyId', authenticate, requireFamilyParam);
 
 router.post('/:familyId/children', async (req, res) => {
   try {

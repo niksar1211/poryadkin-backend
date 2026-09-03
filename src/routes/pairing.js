@@ -1,6 +1,8 @@
 const express = require('express');
+const { randomUUID, randomBytes } = require('crypto');
 
 const pool = require('../db');
+const { hashToken } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -26,7 +28,15 @@ router.post('/redeem', async (req, res) => {
         redeemed.rows[0].child_id,
       ]);
       const c = child.rows[0];
-      return res.json({ child_id: c.id, family_id: c.family_id, child_name: c.name });
+
+      const token = randomBytes(32).toString('hex');
+      await pool.query(
+        `INSERT INTO device_tokens (id, token_hash, family_id, child_id, role)
+         VALUES ($1, $2, $3, $4, 'child')`,
+        [randomUUID(), hashToken(token), c.family_id, c.id]
+      );
+
+      return res.json({ child_id: c.id, family_id: c.family_id, child_name: c.name, token });
     }
 
     // Nothing got claimed above — look the code up to say why (404 vs 410).
