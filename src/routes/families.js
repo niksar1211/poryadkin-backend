@@ -40,6 +40,19 @@ router.post('/:familyId/children', async (req, res) => {
   }
 });
 
+router.get('/:familyId/children', async (req, res) => {
+  try {
+    const { familyId } = req.params;
+    const result = await pool.query(
+      'SELECT id, name FROM children WHERE family_id = $1 ORDER BY created_at ASC',
+      [familyId]
+    );
+    res.json({ children: result.rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 router.post('/:familyId/children/:childId/tasks', async (req, res) => {
   try {
     const { familyId, childId } = req.params;
