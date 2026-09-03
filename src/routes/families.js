@@ -10,7 +10,7 @@ const RARITY_TIERS = ['Обычная', 'Редкая', 'Особая', 'Лег�
 
 // Must match the palette length in the frontend's src/theme/childColors.ts —
 // picked once at creation and stored, not recomputed on every read.
-const CHILD_COLOR_COUNT = 6;
+const CHILD_COLOR_COUNT = 20;
 
 // Every route below is /:familyId/... — the token must belong to that
 // exact family. Mounted with the ':familyId' path (not a bare .use()) so
@@ -33,7 +33,23 @@ router.post('/:familyId/children', async (req, res) => {
     }
 
     const id = randomUUID();
-    const colorKey = Math.floor(Math.random() * CHILD_COLOR_COUNT);
+
+    // Prefer a color no sibling in this family already has — keeps every
+    // child visually distinct up to CHILD_COLOR_COUNT kids. Beyond that,
+    // there's nothing left to avoid, so it falls back to plain random.
+    const existing = await pool.query('SELECT color_key FROM children WHERE family_id = $1', [
+      familyId,
+    ]);
+    const usedKeys = new Set(existing.rows.map((r) => r.color_key));
+    const availableKeys = [];
+    for (let i = 0; i < CHILD_COLOR_COUNT; i++) {
+      if (!usedKeys.has(i)) availableKeys.push(i);
+    }
+    const colorKey =
+      availableKeys.length > 0
+        ? availableKeys[Math.floor(Math.random() * availableKeys.length)]
+        : Math.floor(Math.random() * CHILD_COLOR_COUNT);
+
     await pool.query(
       'INSERT INTO children (id, family_id, name, color_key) VALUES ($1, $2, $3, $4)',
       [id, familyId, name, colorKey]
