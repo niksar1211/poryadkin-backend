@@ -56,7 +56,14 @@ router.get('/:familyId/children', async (req, res) => {
   try {
     const { familyId } = req.params;
     const result = await pool.query(
-      'SELECT id, name, created_at, color_key FROM children WHERE family_id = $1 ORDER BY created_at ASC',
+      `SELECT id, name, created_at, color_key,
+              EXISTS (
+                SELECT 1 FROM device_tokens dt
+                WHERE dt.child_id = children.id AND dt.role = 'child'
+              ) AS connected
+       FROM children
+       WHERE family_id = $1
+       ORDER BY created_at ASC`,
       [familyId]
     );
     res.json({ children: result.rows });
