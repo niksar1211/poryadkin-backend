@@ -34,13 +34,22 @@ router.post('/:familyId/children', async (req, res) => {
 
     const id = randomUUID();
 
-    // Deterministic, not random — the Nth child in a family always gets
-    // the Nth color in the fixed palette, cycling after CHILD_COLOR_COUNT.
+    // Deterministic default — the Nth child in a family gets the Nth color
+    // in the fixed palette, cycling after CHILD_COLOR_COUNT — but the
+    // parent can override it (color picker on the add-child sheet), so an
+    // explicit, in-range color_key from the request wins when present.
     const existing = await pool.query(
       'SELECT COUNT(*)::int AS count FROM children WHERE family_id = $1',
       [familyId]
     );
-    const colorKey = existing.rows[0].count % CHILD_COLOR_COUNT;
+    const defaultColorKey = existing.rows[0].count % CHILD_COLOR_COUNT;
+    const requestedColorKey = req.body?.color_key;
+    const colorKey =
+      Number.isInteger(requestedColorKey) &&
+      requestedColorKey >= 0 &&
+      requestedColorKey < CHILD_COLOR_COUNT
+        ? requestedColorKey
+        : defaultColorKey;
 
     await pool.query(
       'INSERT INTO children (id, family_id, name, color_key) VALUES ($1, $2, $3, $4)',
