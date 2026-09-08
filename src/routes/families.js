@@ -135,6 +135,51 @@ router.post('/:familyId/children/:childId/tasks', async (req, res) => {
   }
 });
 
+// Manual drag-to-reorder: body is the full list of that child's currently
+// visible task ids, in the new order. A row not belonging to this child is
+// silently skipped rather than erroring the whole request — keeps a stale
+// client-side list (e.g. a task confirmed in another tab mid-drag) from
+// failing the reorder outright.
+//
+// A reordered row that's a daily occurrence also pushes its new position
+// onto its template, so the order survives into tomorrow's occurrence
+// instead of reverting to creation order the next time it's generated.
+router.patch('/:familyId/children/:childId/tasks/reorder', async (req, res) => {
+  try {
+    const { familyId, childId } = req.params;
+    const taskIds = req.body?.task_ids;
+
+    if (!Array.isArray(taskIds) || taskIds.some((id) => typeof id !== 'string')) {
+      return res.status(400).json({ status: 'error', message: 'task_ids must be an array of strings' });
+    }
+
+    const child = await pool.query('SELECT id FROM children WHERE id = $1 AND family_id = $2', [
+      childId,
+      familyId,
+    ]);
+    if (child.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'child not found in this family' });
+    }
+
+    for (let i = 0; i < taskIds.length; i++) {
+      const result = await pool.query(
+        `UPDATE tasks SET sort_order = $1 WHERE id = $2 AND child_id = $3 RETURNING template_id`,
+        [i, taskIds[i], childId]
+      );
+      if (result.rowCount === 0) continue;
+
+      const templateId = result.rows[0].template_id;
+      if (templateId) {
+        await pool.query('UPDATE tasks SET sort_order = $1 WHERE id = $2', [i, templateId]);
+      }
+    }
+
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 router.get('/:familyId/tasks', async (req, res) => {
   try {
     const { familyId } = req.params;
