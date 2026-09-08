@@ -108,13 +108,25 @@ router.post('/:familyId/children/:childId/tasks', async (req, res) => {
     const id = randomUUID();
     const isTemplate = recurrence === 'daily';
 
+    // New tasks are appended after whatever this child already has —
+    // templates included, since a generated occurrence inherits its
+    // template's sort_order below. Keeps creation order stable and
+    // predictable instead of relying on created_at, which several tasks
+    // created back-to-back (e.g. the starter set) can't be trusted to order
+    // correctly on its own.
+    const order = await pool.query(
+      'SELECT COALESCE(MAX(sort_order), -1) + 1 AS next FROM tasks WHERE child_id = $1',
+      [childId]
+    );
+    const sortOrder = order.rows[0].next;
+
     // 'daily' creates only the template row (is_template=true, occurrence_date
     // NULL) — it's never shown to the child directly. GET /children/:childId/tasks
     // generates the actual per-day occurrences from it on read.
     await pool.query(
-      `INSERT INTO tasks (id, child_id, family_id, title, coin_value, status, recurrence, is_template)
-       VALUES ($1, $2, $3, $4, $5, 'assigned', $6, $7)`,
-      [id, childId, familyId, title, coinValue, recurrence, isTemplate]
+      `INSERT INTO tasks (id, child_id, family_id, title, coin_value, status, recurrence, is_template, sort_order)
+       VALUES ($1, $2, $3, $4, $5, 'assigned', $6, $7, $8)`,
+      [id, childId, familyId, title, coinValue, recurrence, isTemplate, sortOrder]
     );
 
     res.status(201).json({ task_id: id });
@@ -132,7 +144,7 @@ router.get('/:familyId/tasks', async (req, res) => {
        FROM tasks t
        JOIN children c ON c.id = t.child_id
        WHERE t.family_id = $1 AND t.is_template = false
-       ORDER BY t.created_at ASC`,
+       ORDER BY t.sort_order ASC, t.created_at ASC`,
       [familyId]
     );
     res.json({ tasks: result.rows });

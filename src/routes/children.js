@@ -56,12 +56,13 @@ router.get('/:childId/tasks', async (req, res) => {
     await pool.query(
       `INSERT INTO tasks (
          id, child_id, family_id, title, coin_value, status,
-         recurrence, is_template, template_id, occurrence_date
+         recurrence, is_template, template_id, occurrence_date, sort_order
        )
        SELECT
          gen_random_uuid(), t.child_id, t.family_id, t.title, t.coin_value, 'assigned',
          'daily', false, t.id,
-         ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date
+         ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date,
+         t.sort_order
        FROM tasks t
        WHERE t.child_id = $1 AND t.is_template = true AND t.recurrence = 'daily'
        ON CONFLICT (template_id, occurrence_date) DO NOTHING`,
@@ -72,7 +73,7 @@ router.get('/:childId/tasks', async (req, res) => {
       `SELECT id, title, coin_value, status, created_at, completed_at, confirmed_at
        FROM tasks
        WHERE child_id = $1 AND is_template = false
-       ORDER BY created_at ASC`,
+       ORDER BY sort_order ASC, created_at ASC`,
       [childId]
     );
 
