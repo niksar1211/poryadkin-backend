@@ -3,18 +3,9 @@ const { randomUUID } = require('crypto');
 
 const pool = require('../db');
 const { authenticate, requireFamilyParam } = require('../middleware/auth');
+const { computeRarityTier } = require('../utils/rewardTier');
 
 const router = express.Router();
-
-// Rarity is derived from coin_cost, not chosen independently — thresholds
-// picked for the current starter reward set (10-500 coins); revisit if the
-// typical price range shifts.
-function computeRarityTier(coinCost) {
-  if (coinCost < 20) return 'Обычная';
-  if (coinCost < 50) return 'Редкая';
-  if (coinCost < 500) return 'Особая';
-  return 'Легендарная';
-}
 
 // Must match the palette length in the frontend's src/theme/childColors.ts —
 // picked once at creation and stored, not recomputed on every read.
