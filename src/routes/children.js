@@ -116,6 +116,33 @@ router.get('/:childId/shop', async (req, res) => {
   }
 });
 
+router.post('/:childId/reward-suggestions', async (req, res) => {
+  try {
+    const { childId } = req.params;
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+
+    if (!title) {
+      return res.status(400).json({ status: 'error', message: 'title is required' });
+    }
+
+    const child = await pool.query('SELECT id, family_id FROM children WHERE id = $1', [childId]);
+    if (child.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'child not found' });
+    }
+
+    const id = randomUUID();
+    await pool.query(
+      `INSERT INTO reward_suggestions (id, family_id, child_id, title)
+       VALUES ($1, $2, $3, $4)`,
+      [id, child.rows[0].family_id, childId, title]
+    );
+
+    res.status(201).json({ suggestion_id: id });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 router.post('/:childId/rewards/:rewardId/redeem', async (req, res) => {
   const client = await pool.connect();
   try {

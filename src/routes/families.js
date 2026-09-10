@@ -350,4 +350,63 @@ router.patch('/:familyId/rewards/:rewardId/deactivate', async (req, res) => {
   }
 });
 
+router.get('/:familyId/reward-suggestions', async (req, res) => {
+  try {
+    const { familyId } = req.params;
+    const result = await pool.query(
+      `SELECT rs.id, rs.child_id, c.name AS child_name, rs.title, rs.created_at
+       FROM reward_suggestions rs
+       JOIN children c ON c.id = rs.child_id
+       WHERE rs.family_id = $1 AND rs.status = 'pending'
+       ORDER BY rs.created_at ASC`,
+      [familyId]
+    );
+    res.json({ suggestions: result.rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// Just flips the suggestion's status — it does NOT create the actual reward.
+// The parent still picks the coin cost and rarity, same as any other reward,
+// so the client pre-fills the existing create-reward form with this title
+// and lets the parent finish it from there.
+router.patch('/:familyId/reward-suggestions/:suggestionId/accept', async (req, res) => {
+  try {
+    const { familyId, suggestionId } = req.params;
+    const result = await pool.query(
+      `UPDATE reward_suggestions
+       SET status = 'accepted', resolved_at = now()
+       WHERE id = $1 AND family_id = $2 AND status = 'pending'
+       RETURNING id`,
+      [suggestionId, familyId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'suggestion not found' });
+    }
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+router.patch('/:familyId/reward-suggestions/:suggestionId/reject', async (req, res) => {
+  try {
+    const { familyId, suggestionId } = req.params;
+    const result = await pool.query(
+      `UPDATE reward_suggestions
+       SET status = 'rejected', resolved_at = now()
+       WHERE id = $1 AND family_id = $2 AND status = 'pending'
+       RETURNING id`,
+      [suggestionId, familyId]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'suggestion not found' });
+    }
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 module.exports = router;
