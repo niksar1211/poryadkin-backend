@@ -256,7 +256,7 @@ router.get('/:familyId/rewards', async (req, res) => {
       `SELECT id, title, coin_cost, rarity_tier, is_active, created_at
        FROM rewards
        WHERE family_id = $1 AND is_active = true
-       ORDER BY created_at ASC`,
+       ORDER BY coin_cost ASC, created_at ASC`,
       [familyId]
     );
     res.json({ rewards: result.rows });

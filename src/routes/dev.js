@@ -14,6 +14,7 @@ const STARTER_REWARDS = [
   { title: 'Лечь спать на час позже', coin_cost: 25 },
   { title: 'Карманные деньги 100 рублей', coin_cost: 60 },
   { title: 'Пицца на ужин', coin_cost: 35 },
+  { title: 'Новый смартфон', coin_cost: 5000 },
 ];
 
 // TEMPORARY / DEV-ONLY endpoint.
