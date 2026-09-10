@@ -6,7 +6,15 @@ const { authenticate, requireFamilyParam } = require('../middleware/auth');
 
 const router = express.Router();
 
-const RARITY_TIERS = ['Обычная', 'Редкая', 'Особая', 'Легендарная'];
+// Rarity is derived from coin_cost, not chosen independently — thresholds
+// picked for the current starter reward set (10-500 coins); revisit if the
+// typical price range shifts.
+function computeRarityTier(coinCost) {
+  if (coinCost < 20) return 'Обычная';
+  if (coinCost < 50) return 'Редкая';
+  if (coinCost < 500) return 'Особая';
+  return 'Легендарная';
+}
 
 // Must match the palette length in the frontend's src/theme/childColors.ts —
 // picked once at creation and stored, not recomputed on every read.
@@ -221,7 +229,6 @@ router.post('/:familyId/rewards', async (req, res) => {
     const { familyId } = req.params;
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const coinCost = Number(req.body?.coin_cost);
-    const rarityTier = req.body?.rarity_tier;
 
     if (!title) {
       return res.status(400).json({ status: 'error', message: 'title is required' });
@@ -231,11 +238,6 @@ router.post('/:familyId/rewards', async (req, res) => {
         .status(400)
         .json({ status: 'error', message: 'coin_cost must be a positive integer' });
     }
-    if (!RARITY_TIERS.includes(rarityTier)) {
-      return res
-        .status(400)
-        .json({ status: 'error', message: `rarity_tier must be one of: ${RARITY_TIERS.join(', ')}` });
-    }
 
     const family = await pool.query('SELECT id FROM families WHERE id = $1', [familyId]);
     if (family.rowCount === 0) {
@@ -243,13 +245,14 @@ router.post('/:familyId/rewards', async (req, res) => {
     }
 
     const id = randomUUID();
+    const rarityTier = computeRarityTier(coinCost);
     await pool.query(
       `INSERT INTO rewards (id, family_id, title, coin_cost, rarity_tier)
        VALUES ($1, $2, $3, $4, $5)`,
       [id, familyId, title, coinCost, rarityTier]
     );
 
-    res.status(201).json({ reward_id: id });
+    res.status(201).json({ reward_id: id, rarity_tier: rarityTier });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
@@ -273,7 +276,8 @@ router.get('/:familyId/rewards', async (req, res) => {
 
 // Partial update of title/coin_cost only. rarity_tier and is_active are
 // intentionally out of scope here — they have (or will have) their own
-// dedicated endpoints/logic.
+// dedicated endpoints/logic. rarity_tier isn't directly settable, but a
+// coin_cost change recomputes and writes it too, so it can't go stale.
 router.patch('/:familyId/rewards/:rewardId', async (req, res) => {
   try {
     const { familyId, rewardId } = req.params;
@@ -306,6 +310,8 @@ router.patch('/:familyId/rewards/:rewardId', async (req, res) => {
     if (hasCoinCost) {
       setClauses.push(`coin_cost = $${i++}`);
       values.push(coinCost);
+      setClauses.push(`rarity_tier = $${i++}`);
+      values.push(computeRarityTier(coinCost));
     }
     values.push(rewardId, familyId);
 
