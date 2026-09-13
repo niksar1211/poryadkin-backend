@@ -63,12 +63,19 @@ router.post('/:familyId/children', async (req, res) => {
 router.get('/:familyId/children', async (req, res) => {
   try {
     const { familyId } = req.params;
+    // balance cast to ::int right in SQL so it comes back as a JS number —
+    // node-pg otherwise stringifies a bare SUM() (it's bigint) to dodge
+    // precision loss, which isn't a concern at these amounts.
     const result = await pool.query(
       `SELECT id, name, created_at, color_key,
               EXISTS (
                 SELECT 1 FROM device_tokens dt
                 WHERE dt.child_id = children.id AND dt.role = 'child'
-              ) AS connected
+              ) AS connected,
+              COALESCE(
+                (SELECT SUM(amount)::int FROM coin_transactions WHERE child_id = children.id),
+                0
+              ) AS balance
        FROM children
        WHERE family_id = $1
        ORDER BY created_at ASC`,
