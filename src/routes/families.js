@@ -312,7 +312,7 @@ router.get('/:familyId/tasks/pending-confirmation', async (req, res) => {
     const { familyId } = req.params;
     const result = await pool.query(
       `SELECT t.id, t.child_id, c.name AS child_name, t.title, t.coin_value, t.status,
-              t.created_at, t.completed_at
+              t.recurrence, t.created_at, t.completed_at
        FROM tasks t
        JOIN children c ON c.id = t.child_id
        WHERE t.family_id = $1 AND t.status = 'pending_confirmation'
