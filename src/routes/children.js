@@ -69,10 +69,23 @@ router.get('/:childId/tasks', async (req, res) => {
       [childId]
     );
 
+    // A daily occurrence that's still 'assigned'/'needs_revision' once its
+    // day has passed is stale — the child never acted on it, and a fresh
+    // occurrence for today already exists (inserted above). Without this
+    // filter it lingers forever and shows up as an apparent duplicate of
+    // today's card. A 'pending_confirmation' one survives regardless of
+    // date, since the parent still owes it a decision; 'confirmed' ones are
+    // kept as history (shown separately in the UI). One-time tasks
+    // (template_id IS NULL) have no notion of "day" at all.
     const result = await pool.query(
       `SELECT id, title, coin_value, status, created_at, completed_at, confirmed_at
        FROM tasks
        WHERE child_id = $1 AND is_template = false
+         AND (
+           template_id IS NULL
+           OR status IN ('pending_confirmation', 'confirmed')
+           OR occurrence_date = ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date
+         )
        ORDER BY sort_order ASC, created_at ASC`,
       [childId]
     );

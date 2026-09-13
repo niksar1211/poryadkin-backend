@@ -182,12 +182,24 @@ router.patch('/:familyId/children/:childId/tasks/reorder', async (req, res) => {
 router.get('/:familyId/tasks', async (req, res) => {
   try {
     const { familyId } = req.params;
+    // Same staleness filter as GET /children/:childId/tasks — a daily
+    // occurrence past its day that was never touched (still
+    // 'assigned'/'needs_revision') is dropped so it doesn't sit alongside
+    // today's freshly generated card looking like a duplicate.
+    // 'pending_confirmation' survives regardless of date (parent still owes
+    // it a decision); 'confirmed' stays as history; one-time tasks
+    // (template_id IS NULL) have no notion of "day".
     const result = await pool.query(
       `SELECT t.id, t.child_id, c.name AS child_name, t.title, t.coin_value, t.status,
               t.recurrence, t.created_at, t.completed_at, t.confirmed_at
        FROM tasks t
        JOIN children c ON c.id = t.child_id
        WHERE t.family_id = $1 AND t.is_template = false
+         AND (
+           t.template_id IS NULL
+           OR t.status IN ('pending_confirmation', 'confirmed')
+           OR t.occurrence_date = ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date
+         )
        ORDER BY t.sort_order ASC, t.created_at ASC`,
       [familyId]
     );
