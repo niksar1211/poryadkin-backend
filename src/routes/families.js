@@ -93,6 +93,10 @@ router.post('/:familyId/children/:childId/tasks', async (req, res) => {
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const coinValue = Number(req.body?.coin_value);
     const recurrence = req.body?.recurrence === 'daily' ? 'daily' : 'one_time';
+    // Optional — '' and omitted both mean "no description", stored as NULL
+    // rather than an empty string.
+    const description =
+      typeof req.body?.description === 'string' ? req.body.description.trim() || null : null;
 
     if (!title) {
       return res.status(400).json({ status: 'error', message: 'title is required' });
@@ -130,9 +134,9 @@ router.post('/:familyId/children/:childId/tasks', async (req, res) => {
     // NULL) — it's never shown to the child directly. GET /children/:childId/tasks
     // generates the actual per-day occurrences from it on read.
     await pool.query(
-      `INSERT INTO tasks (id, child_id, family_id, title, coin_value, status, recurrence, is_template, sort_order)
-       VALUES ($1, $2, $3, $4, $5, 'assigned', $6, $7, $8)`,
-      [id, childId, familyId, title, coinValue, recurrence, isTemplate, sortOrder]
+      `INSERT INTO tasks (id, child_id, family_id, title, description, coin_value, status, recurrence, is_template, sort_order)
+       VALUES ($1, $2, $3, $4, $5, $6, 'assigned', $7, $8, $9)`,
+      [id, childId, familyId, title, description, coinValue, recurrence, isTemplate, sortOrder]
     );
 
     res.status(201).json({ task_id: id });
@@ -201,6 +205,8 @@ router.patch('/:familyId/children/:childId/tasks/:taskId', async (req, res) => {
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const coinValue = Number(req.body?.coin_value);
     const isPaused = req.body?.is_paused === true;
+    const description =
+      typeof req.body?.description === 'string' ? req.body.description.trim() || null : null;
 
     if (!title) {
       return res.status(400).json({ status: 'error', message: 'title is required' });
@@ -232,8 +238,8 @@ router.patch('/:familyId/children/:childId/tasks/:taskId', async (req, res) => {
 
     const templateId = task.rows[0].template_id;
     await pool.query(
-      'UPDATE tasks SET title = $1, coin_value = $2, is_paused = $3 WHERE id = $4 OR id = $5',
-      [title, coinValue, isPaused, taskId, templateId || taskId]
+      'UPDATE tasks SET title = $1, coin_value = $2, is_paused = $3, description = $4 WHERE id = $5 OR id = $6',
+      [title, coinValue, isPaused, description, taskId, templateId || taskId]
     );
 
     res.json({ status: 'ok' });
@@ -296,7 +302,7 @@ router.get('/:familyId/tasks', async (req, res) => {
     // it a decision); 'confirmed' stays as history; one-time tasks
     // (template_id IS NULL) have no notion of "day".
     const result = await pool.query(
-      `SELECT t.id, t.child_id, c.name AS child_name, t.title, t.coin_value, t.status,
+      `SELECT t.id, t.child_id, c.name AS child_name, t.title, t.description, t.coin_value, t.status,
               t.recurrence, t.is_paused, t.created_at, t.completed_at, t.confirmed_at
        FROM tasks t
        JOIN children c ON c.id = t.child_id
@@ -338,6 +344,8 @@ router.post('/:familyId/rewards', async (req, res) => {
     const { familyId } = req.params;
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const coinCost = Number(req.body?.coin_cost);
+    const description =
+      typeof req.body?.description === 'string' ? req.body.description.trim() || null : null;
 
     if (!title) {
       return res.status(400).json({ status: 'error', message: 'title is required' });
@@ -356,9 +364,9 @@ router.post('/:familyId/rewards', async (req, res) => {
     const id = randomUUID();
     const rarityTier = computeRarityTier(coinCost);
     await pool.query(
-      `INSERT INTO rewards (id, family_id, title, coin_cost, rarity_tier)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [id, familyId, title, coinCost, rarityTier]
+      `INSERT INTO rewards (id, family_id, title, description, coin_cost, rarity_tier)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, familyId, title, description, coinCost, rarityTier]
     );
 
     res.status(201).json({ reward_id: id, rarity_tier: rarityTier });
@@ -371,7 +379,7 @@ router.get('/:familyId/rewards', async (req, res) => {
   try {
     const { familyId } = req.params;
     const result = await pool.query(
-      `SELECT id, title, coin_cost, rarity_tier, is_active, created_at
+      `SELECT id, title, description, coin_cost, rarity_tier, is_active, created_at
        FROM rewards
        WHERE family_id = $1 AND is_active = true
        ORDER BY coin_cost ASC, created_at ASC`,
@@ -392,8 +400,9 @@ router.patch('/:familyId/rewards/:rewardId', async (req, res) => {
     const { familyId, rewardId } = req.params;
     const hasTitle = typeof req.body?.title === 'string';
     const hasCoinCost = req.body?.coin_cost !== undefined;
+    const hasDescription = typeof req.body?.description === 'string';
 
-    if (!hasTitle && !hasCoinCost) {
+    if (!hasTitle && !hasCoinCost && !hasDescription) {
       return res.status(400).json({ status: 'error', message: 'nothing to update' });
     }
 
@@ -409,6 +418,8 @@ router.patch('/:familyId/rewards/:rewardId', async (req, res) => {
         .json({ status: 'error', message: 'coin_cost must be a positive integer' });
     }
 
+    const description = hasDescription ? req.body.description.trim() || null : undefined;
+
     const setClauses = [];
     const values = [];
     let i = 1;
@@ -422,13 +433,17 @@ router.patch('/:familyId/rewards/:rewardId', async (req, res) => {
       setClauses.push(`rarity_tier = $${i++}`);
       values.push(computeRarityTier(coinCost));
     }
+    if (hasDescription) {
+      setClauses.push(`description = $${i++}`);
+      values.push(description);
+    }
     values.push(rewardId, familyId);
 
     const result = await pool.query(
       `UPDATE rewards
        SET ${setClauses.join(', ')}
        WHERE id = $${i++} AND family_id = $${i++} AND is_active = true
-       RETURNING id, title, coin_cost, rarity_tier, is_active, created_at`,
+       RETURNING id, title, description, coin_cost, rarity_tier, is_active, created_at`,
       values
     );
 
