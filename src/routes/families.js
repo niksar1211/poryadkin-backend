@@ -179,6 +179,104 @@ router.patch('/:familyId/children/:childId/tasks/reorder', async (req, res) => {
   }
 });
 
+// Only 'assigned'/'needs_revision' tasks are editable — matches what the
+// app lets a parent tap into (pending/confirmed cards have their own
+// dedicated actions instead). Editing a daily occurrence edits its template
+// row too, in the same statement, so the change also carries into tomorrow's
+// (and any other still-open) occurrence instead of reverting the next time
+// one gets generated; a one-time task has no template_id, so this only ever
+// touches the row itself.
+router.patch('/:familyId/children/:childId/tasks/:taskId', async (req, res) => {
+  try {
+    const { familyId, childId, taskId } = req.params;
+    const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
+    const coinValue = Number(req.body?.coin_value);
+
+    if (!title) {
+      return res.status(400).json({ status: 'error', message: 'title is required' });
+    }
+    if (!Number.isInteger(coinValue) || coinValue <= 0) {
+      return res
+        .status(400)
+        .json({ status: 'error', message: 'coin_value must be a positive integer' });
+    }
+
+    // Checked as its own step rather than folded into the UPDATE's WHERE —
+    // a daily occurrence's template row is always 'assigned' (it never goes
+    // through complete/confirm/reject itself), so a combined query would
+    // happily match and update the template even while the occurrence the
+    // parent actually tapped sits at pending_confirmation, silently
+    // bypassing the check.
+    const task = await pool.query(
+      `SELECT id, template_id, status FROM tasks WHERE id = $1 AND family_id = $2 AND child_id = $3`,
+      [taskId, familyId, childId]
+    );
+    if (task.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'task not found' });
+    }
+    if (!['assigned', 'needs_revision'].includes(task.rows[0].status)) {
+      return res
+        .status(409)
+        .json({ status: 'error', message: 'task cannot be edited from its current state' });
+    }
+
+    const templateId = task.rows[0].template_id;
+    await pool.query('UPDATE tasks SET title = $1, coin_value = $2 WHERE id = $3 OR id = $4', [
+      title,
+      coinValue,
+      taskId,
+      templateId || taskId,
+    ]);
+
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// Deleting a daily occurrence deletes its template instead — "delete this
+// task" means the recurring habit itself, not just today's card. That
+// cascades (tasks.template_id ON DELETE CASCADE) to every other occurrence
+// still pointing at it, EXCEPT confirmed ones: those are detached first so
+// they survive as standalone history, matching how a one-time task (no
+// template at all) already displays. coin_transactions.task_id is ON DELETE
+// SET NULL, so a child's earned balance is never affected by any of this —
+// only the traceability of a deleted row's coin transaction back to it.
+router.delete('/:familyId/children/:childId/tasks/:taskId', async (req, res) => {
+  try {
+    const { familyId, childId, taskId } = req.params;
+
+    const task = await pool.query(
+      `SELECT id, template_id, status FROM tasks WHERE id = $1 AND family_id = $2 AND child_id = $3`,
+      [taskId, familyId, childId]
+    );
+    if (task.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'task not found' });
+    }
+    if (!['assigned', 'needs_revision'].includes(task.rows[0].status)) {
+      return res
+        .status(409)
+        .json({ status: 'error', message: 'task cannot be deleted from its current state' });
+    }
+
+    const templateId = task.rows[0].template_id;
+    const deleteTargetId = templateId || taskId;
+
+    if (templateId) {
+      await pool.query(
+        `UPDATE tasks SET template_id = NULL WHERE template_id = $1 AND status = 'confirmed'`,
+        [templateId]
+      );
+    }
+
+    await pool.query('DELETE FROM tasks WHERE id = $1', [deleteTargetId]);
+
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 router.get('/:familyId/tasks', async (req, res) => {
   try {
     const { familyId } = req.params;
