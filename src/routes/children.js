@@ -53,6 +53,9 @@ router.get('/:childId/tasks', async (req, res) => {
     // Atomic per-row: ON CONFLICT (template_id, occurrence_date) DO NOTHING means
     // two concurrent requests generating "today" for the same template can't both
     // succeed — no separate existence check, no race window.
+    //
+    // A paused template is skipped entirely — no new occurrence gets
+    // generated for it until the parent unpauses it.
     await pool.query(
       `INSERT INTO tasks (
          id, child_id, family_id, title, coin_value, status,
@@ -64,7 +67,7 @@ router.get('/:childId/tasks', async (req, res) => {
          ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date,
          t.sort_order
        FROM tasks t
-       WHERE t.child_id = $1 AND t.is_template = true AND t.recurrence = 'daily'
+       WHERE t.child_id = $1 AND t.is_template = true AND t.recurrence = 'daily' AND t.is_paused = false
        ON CONFLICT (template_id, occurrence_date) DO NOTHING`,
       [childId]
     );
@@ -77,10 +80,15 @@ router.get('/:childId/tasks', async (req, res) => {
     // date, since the parent still owes it a decision; 'confirmed' ones are
     // kept as history (shown separately in the UI). One-time tasks
     // (template_id IS NULL) have no notion of "day" at all.
+    //
+    // is_paused = false excludes a paused task outright — set on the row
+    // itself for a one-time task, and on both the template and whichever
+    // occurrence was open when the parent paused it (see the PATCH route),
+    // so this filter alone covers both cases without a join.
     const result = await pool.query(
       `SELECT id, title, coin_value, status, created_at, completed_at, confirmed_at
        FROM tasks
-       WHERE child_id = $1 AND is_template = false
+       WHERE child_id = $1 AND is_template = false AND is_paused = false
          AND (
            template_id IS NULL
            OR status IN ('pending_confirmation', 'confirmed')

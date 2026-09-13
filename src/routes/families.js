@@ -185,12 +185,15 @@ router.patch('/:familyId/children/:childId/tasks/reorder', async (req, res) => {
 // row too, in the same statement, so the change also carries into tomorrow's
 // (and any other still-open) occurrence instead of reverting the next time
 // one gets generated; a one-time task has no template_id, so this only ever
-// touches the row itself.
+// touches the row itself. is_paused rides along the same statement — see
+// GET /children/:childId/tasks for what it actually does (hides the task
+// from the child, stops a daily task generating new occurrences).
 router.patch('/:familyId/children/:childId/tasks/:taskId', async (req, res) => {
   try {
     const { familyId, childId, taskId } = req.params;
     const title = typeof req.body?.title === 'string' ? req.body.title.trim() : '';
     const coinValue = Number(req.body?.coin_value);
+    const isPaused = req.body?.is_paused === true;
 
     if (!title) {
       return res.status(400).json({ status: 'error', message: 'title is required' });
@@ -221,12 +224,10 @@ router.patch('/:familyId/children/:childId/tasks/:taskId', async (req, res) => {
     }
 
     const templateId = task.rows[0].template_id;
-    await pool.query('UPDATE tasks SET title = $1, coin_value = $2 WHERE id = $3 OR id = $4', [
-      title,
-      coinValue,
-      taskId,
-      templateId || taskId,
-    ]);
+    await pool.query(
+      'UPDATE tasks SET title = $1, coin_value = $2, is_paused = $3 WHERE id = $4 OR id = $5',
+      [title, coinValue, isPaused, taskId, templateId || taskId]
+    );
 
     res.json({ status: 'ok' });
   } catch (err) {
@@ -289,7 +290,7 @@ router.get('/:familyId/tasks', async (req, res) => {
     // (template_id IS NULL) have no notion of "day".
     const result = await pool.query(
       `SELECT t.id, t.child_id, c.name AS child_name, t.title, t.coin_value, t.status,
-              t.recurrence, t.created_at, t.completed_at, t.confirmed_at
+              t.recurrence, t.is_paused, t.created_at, t.completed_at, t.confirmed_at
        FROM tasks t
        JOIN children c ON c.id = t.child_id
        WHERE t.family_id = $1 AND t.is_template = false
