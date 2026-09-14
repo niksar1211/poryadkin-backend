@@ -322,9 +322,12 @@ router.get('/:familyId/tasks', async (req, res) => {
     // 'assigned'/'needs_revision') is dropped so it doesn't sit alongside
     // today's freshly generated card looking like a duplicate.
     // 'pending_confirmation' survives regardless of date (parent still owes
-    // it a decision); a 'confirmed' one only survives through today's date
-    // match below, so it drops off the day after instead of lingering
-    // forever; one-time tasks (template_id IS NULL) have no notion of "day".
+    // it a decision). A 'confirmed' daily occurrence only survives through
+    // today's occurrence_date match; a 'confirmed' one-time task (no
+    // occurrence_date at all) is judged by confirmed_at instead, so it
+    // drops off the day after too instead of sitting there as "done"
+    // forever. Everything else about a one-time task (still open, or
+    // needs_revision) has no notion of "day" and always shows.
     const result = await pool.query(
       `SELECT t.id, t.child_id, c.name AS child_name, t.title, t.description, t.coin_value, t.status,
               t.recurrence, t.is_paused, t.created_at, t.completed_at, t.confirmed_at
@@ -332,9 +335,16 @@ router.get('/:familyId/tasks', async (req, res) => {
        JOIN children c ON c.id = t.child_id
        WHERE t.family_id = $1 AND t.is_template = false
          AND (
-           t.template_id IS NULL
-           OR t.status = 'pending_confirmation'
+           t.status = 'pending_confirmation'
            OR t.occurrence_date = ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date
+           OR (
+             t.template_id IS NULL
+             AND (
+               t.status <> 'confirmed'
+               OR ((t.confirmed_at AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date =
+                  ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date
+             )
+           )
          )
        ORDER BY t.sort_order ASC, t.created_at ASC`,
       [familyId]
