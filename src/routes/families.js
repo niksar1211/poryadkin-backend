@@ -379,7 +379,7 @@ router.get('/:familyId/rewards', async (req, res) => {
   try {
     const { familyId } = req.params;
     const result = await pool.query(
-      `SELECT id, title, description, coin_cost, rarity_tier, is_active, created_at
+      `SELECT id, title, description, coin_cost, rarity_tier, is_active, is_paused, created_at
        FROM rewards
        WHERE family_id = $1 AND is_active = true
        ORDER BY coin_cost ASC, created_at ASC`,
@@ -401,8 +401,9 @@ router.patch('/:familyId/rewards/:rewardId', async (req, res) => {
     const hasTitle = typeof req.body?.title === 'string';
     const hasCoinCost = req.body?.coin_cost !== undefined;
     const hasDescription = typeof req.body?.description === 'string';
+    const hasIsPaused = typeof req.body?.is_paused === 'boolean';
 
-    if (!hasTitle && !hasCoinCost && !hasDescription) {
+    if (!hasTitle && !hasCoinCost && !hasDescription && !hasIsPaused) {
       return res.status(400).json({ status: 'error', message: 'nothing to update' });
     }
 
@@ -437,13 +438,17 @@ router.patch('/:familyId/rewards/:rewardId', async (req, res) => {
       setClauses.push(`description = $${i++}`);
       values.push(description);
     }
+    if (hasIsPaused) {
+      setClauses.push(`is_paused = $${i++}`);
+      values.push(req.body.is_paused);
+    }
     values.push(rewardId, familyId);
 
     const result = await pool.query(
       `UPDATE rewards
        SET ${setClauses.join(', ')}
        WHERE id = $${i++} AND family_id = $${i++} AND is_active = true
-       RETURNING id, title, description, coin_cost, rarity_tier, is_active, created_at`,
+       RETURNING id, title, description, coin_cost, rarity_tier, is_active, is_paused, created_at`,
       values
     );
 

@@ -126,7 +126,7 @@ router.get('/:childId/shop', async (req, res) => {
     const rewardsResult = await pool.query(
       `SELECT id, title, coin_cost, rarity_tier
        FROM rewards
-       WHERE family_id = $1 AND is_active = true
+       WHERE family_id = $1 AND is_active = true AND is_paused = false
        ORDER BY coin_cost ASC`,
       [familyId]
     );
