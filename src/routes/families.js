@@ -291,6 +291,37 @@ router.delete('/:familyId/children/:childId/tasks/:taskId', async (req, res) => 
   }
 });
 
+// Every task this child has ever had confirmed, most recent first — the
+// counterpart to GET /:familyId/tasks now filtering a 'confirmed' task out
+// the day after (see that route), so a parent who wants to look further
+// back than "today" has somewhere to do it.
+router.get('/:familyId/children/:childId/tasks/history', async (req, res) => {
+  try {
+    const { familyId, childId } = req.params;
+
+    const child = await pool.query('SELECT id FROM children WHERE id = $1 AND family_id = $2', [
+      childId,
+      familyId,
+    ]);
+    if (child.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'child not found in this family' });
+    }
+
+    const result = await pool.query(
+      `SELECT id, title, description, coin_value, recurrence, confirmed_at
+       FROM tasks
+       WHERE child_id = $1 AND family_id = $2 AND status = 'confirmed'
+       ORDER BY confirmed_at DESC
+       LIMIT 200`,
+      [childId, familyId]
+    );
+
+    res.json({ tasks: result.rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
 router.get('/:familyId/tasks', async (req, res) => {
   try {
     const { familyId } = req.params;
