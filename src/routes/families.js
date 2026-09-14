@@ -294,13 +294,37 @@ router.delete('/:familyId/children/:childId/tasks/:taskId', async (req, res) => 
 router.get('/:familyId/tasks', async (req, res) => {
   try {
     const { familyId } = req.params;
+
+    // Same day-boundary generation as GET /children/:childId/tasks, just
+    // scoped to the whole family instead of one child — without this, the
+    // parent's list only ever showed a fresh daily occurrence once SOME
+    // child's own device had opened the app that day (the only other place
+    // this INSERT ran), so checking the parent screen first each day made
+    // every still-active daily task look like it had vanished.
+    await pool.query(
+      `INSERT INTO tasks (
+         id, child_id, family_id, title, description, coin_value, status,
+         recurrence, is_template, template_id, occurrence_date, sort_order
+       )
+       SELECT
+         gen_random_uuid(), t.child_id, t.family_id, t.title, t.description, t.coin_value, 'assigned',
+         'daily', false, t.id,
+         ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date,
+         t.sort_order
+       FROM tasks t
+       WHERE t.family_id = $1 AND t.is_template = true AND t.recurrence = 'daily' AND t.is_paused = false
+       ON CONFLICT (template_id, occurrence_date) DO NOTHING`,
+      [familyId]
+    );
+
     // Same staleness filter as GET /children/:childId/tasks — a daily
     // occurrence past its day that was never touched (still
     // 'assigned'/'needs_revision') is dropped so it doesn't sit alongside
     // today's freshly generated card looking like a duplicate.
     // 'pending_confirmation' survives regardless of date (parent still owes
-    // it a decision); 'confirmed' stays as history; one-time tasks
-    // (template_id IS NULL) have no notion of "day".
+    // it a decision); a 'confirmed' one only survives through today's date
+    // match below, so it drops off the day after instead of lingering
+    // forever; one-time tasks (template_id IS NULL) have no notion of "day".
     const result = await pool.query(
       `SELECT t.id, t.child_id, c.name AS child_name, t.title, t.description, t.coin_value, t.status,
               t.recurrence, t.is_paused, t.created_at, t.completed_at, t.confirmed_at
@@ -309,7 +333,7 @@ router.get('/:familyId/tasks', async (req, res) => {
        WHERE t.family_id = $1 AND t.is_template = false
          AND (
            t.template_id IS NULL
-           OR t.status IN ('pending_confirmation', 'confirmed')
+           OR t.status = 'pending_confirmation'
            OR t.occurrence_date = ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date
          )
        ORDER BY t.sort_order ASC, t.created_at ASC`,

@@ -58,11 +58,11 @@ router.get('/:childId/tasks', async (req, res) => {
     // generated for it until the parent unpauses it.
     await pool.query(
       `INSERT INTO tasks (
-         id, child_id, family_id, title, coin_value, status,
+         id, child_id, family_id, title, description, coin_value, status,
          recurrence, is_template, template_id, occurrence_date, sort_order
        )
        SELECT
-         gen_random_uuid(), t.child_id, t.family_id, t.title, t.coin_value, 'assigned',
+         gen_random_uuid(), t.child_id, t.family_id, t.title, t.description, t.coin_value, 'assigned',
          'daily', false, t.id,
          ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date,
          t.sort_order
@@ -77,9 +77,11 @@ router.get('/:childId/tasks', async (req, res) => {
     // occurrence for today already exists (inserted above). Without this
     // filter it lingers forever and shows up as an apparent duplicate of
     // today's card. A 'pending_confirmation' one survives regardless of
-    // date, since the parent still owes it a decision; 'confirmed' ones are
-    // kept as history (shown separately in the UI). One-time tasks
-    // (template_id IS NULL) have no notion of "day" at all.
+    // date, since the parent still owes it a decision. A 'confirmed' one is
+    // NOT given the same date-unrestricted treatment — it's only kept
+    // through the occurrence_date = today branch below, so it drops off the
+    // list the day after it was confirmed instead of lingering forever.
+    // One-time tasks (template_id IS NULL) have no notion of "day" at all.
     //
     // is_paused = false excludes a paused task outright — set on the row
     // itself for a one-time task, and on both the template and whichever
@@ -91,7 +93,7 @@ router.get('/:childId/tasks', async (req, res) => {
        WHERE child_id = $1 AND is_template = false AND is_paused = false
          AND (
            template_id IS NULL
-           OR status IN ('pending_confirmation', 'confirmed')
+           OR status = 'pending_confirmation'
            OR occurrence_date = ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date
          )
        ORDER BY sort_order ASC, created_at ASC`,
