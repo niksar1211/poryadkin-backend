@@ -90,7 +90,7 @@ router.get('/:childId/tasks', async (req, res) => {
     // occurrence was open when the parent paused it (see the PATCH route),
     // so this filter alone covers both cases without a join.
     const result = await pool.query(
-      `SELECT id, title, coin_value, status, created_at, completed_at, confirmed_at
+      `SELECT id, title, coin_value, status, recurrence, created_at, completed_at, confirmed_at
        FROM tasks
        WHERE child_id = $1 AND is_template = false AND is_paused = false
          AND (
