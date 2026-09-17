@@ -170,9 +170,12 @@ router.post('/:childId/reward-suggestions', async (req, res) => {
       [id, familyId, childId, title]
     );
 
+    // is_read: true from the moment it's created — this type is feed-only
+    // (never triggers the celebration popup), so there's nothing to "read"
+    // beyond just showing up in the list already settled.
     await pool.query(
-      `INSERT INTO events (id, family_id, child_id, type, related_suggestion_id)
-       VALUES ($1, $2, $3, 'reward_proposed', $4)`,
+      `INSERT INTO events (id, family_id, child_id, type, related_suggestion_id, is_read)
+       VALUES ($1, $2, $3, 'reward_proposed', $4, true)`,
       [randomUUID(), familyId, childId, id]
     );
 
@@ -202,7 +205,7 @@ router.post('/:childId/rewards/:rewardId/redeem', async (req, res) => {
 
     // Reward must be active AND belong to this child's own family.
     const reward = await client.query(
-      `SELECT r.id, r.coin_cost
+      `SELECT r.id, r.coin_cost, r.family_id
        FROM rewards r
        JOIN children c ON c.family_id = r.family_id
        WHERE r.id = $1 AND c.id = $2 AND r.is_active = true`,
@@ -213,6 +216,7 @@ router.post('/:childId/rewards/:rewardId/redeem', async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'reward not found' });
     }
     const coinCost = reward.rows[0].coin_cost;
+    const familyId = reward.rows[0].family_id;
 
     const balanceResult = await client.query(
       'SELECT COALESCE(SUM(amount), 0) AS balance FROM coin_transactions WHERE child_id = $1',
@@ -230,6 +234,16 @@ router.post('/:childId/rewards/:rewardId/redeem', async (req, res) => {
       `INSERT INTO coin_transactions (id, child_id, reward_id, amount, reason)
        VALUES ($1, $2, $3, $4, 'reward_redemption')`,
       [transactionId, childId, rewardId, -coinCost]
+    );
+
+    // Coins are spent above, unconditionally — this event is just a
+    // notification of that already-committed fact, same as task_confirmed's
+    // own insert. is_read: true since reward_purchased is feed-only (no
+    // popup) and the child was just looking right at the purchase.
+    await client.query(
+      `INSERT INTO events (id, family_id, child_id, type, related_reward_id, coins_amount, is_read)
+       VALUES ($1, $2, $3, 'reward_purchased', $4, $5, true)`,
+      [randomUUID(), familyId, childId, rewardId, -coinCost]
     );
 
     await client.query('COMMIT');
@@ -250,12 +264,14 @@ router.post('/:childId/rewards/:rewardId/redeem', async (req, res) => {
 
 // Newest-first within each bucket, unread bucket entirely before read —
 // matches the "События" screen's own sort (unread first, then read, dates
-// descending within each). related_suggestion_id is aliased to
-// related_reward_id in the response: for reward_proposed/reward_approved/
-// reward_declined the "reward" a child sees is still just a suggestion at
-// this point (accepting one only flips its status — the parent fills out
-// a separate create-reward form afterwards), so reward_suggestions is the
-// only table that actually has a title to join against for those types.
+// descending within each). related_reward_id in the response is whichever
+// of the two source columns this row actually has: the suggestion-lifecycle
+// types (reward_proposed/approved/declined) only ever set
+// related_suggestion_id (there's no real `rewards` row yet — accepting a
+// suggestion only flips its own status, the parent still fills out a
+// separate create-reward form afterwards), while reward_purchased only
+// ever sets related_reward_id (a real catalog reward). The two are
+// mutually exclusive per row, so COALESCE always picks the right one.
 router.get('/:childId/events', async (req, res) => {
   try {
     const { childId } = req.params;
@@ -265,14 +281,58 @@ router.get('/:childId/events', async (req, res) => {
       return res.status(404).json({ status: 'error', message: 'child not found' });
     }
 
+    // Two maintenance steps run on every fetch — this is also the endpoint
+    // EventsCelebrationGate polls on cold start/foreground, so it doubles as
+    // the "check on app open" trigger the spec calls for; no separate cron.
+    //
+    // 1) task_overdue: a one-time task still open (assigned/needs_revision)
+    // whose creation day has already passed gets exactly one overdue event
+    // (guarded by NOT EXISTS, so re-running this never duplicates it).
+    // Daily tasks have no equivalent state — a stale daily occurrence is
+    // just replaced by a fresh one (see GET /:childId/tasks), never flagged.
+    await pool.query(
+      `INSERT INTO events (id, family_id, child_id, type, related_task_id, is_read)
+       SELECT gen_random_uuid(), t.family_id, t.child_id, 'task_overdue', t.id, true
+       FROM tasks t
+       WHERE t.child_id = $1
+         AND t.recurrence = 'one_time'
+         AND t.status IN ('assigned', 'needs_revision')
+         AND t.is_paused = false
+         AND ((t.created_at AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date <
+             ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date
+         AND NOT EXISTS (
+           SELECT 1 FROM events e WHERE e.related_task_id = t.id AND e.type = 'task_overdue'
+         )`,
+      [childId]
+    );
+
+    // 2) task_confirmed -> task_archived: once the day it was confirmed on
+    // has passed, the same event row flips in place to the "archived" type
+    // instead of a second row being inserted — it's the same underlying
+    // fact (the task was confirmed) aging out of "new", not a second event.
+    await pool.query(
+      `UPDATE events e
+       SET type = 'task_archived', is_read = true
+       FROM tasks t
+       WHERE e.related_task_id = t.id
+         AND e.child_id = $1
+         AND e.type = 'task_confirmed'
+         AND t.confirmed_at IS NOT NULL
+         AND ((t.confirmed_at AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date <
+             ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date`,
+      [childId]
+    );
+
     const result = await pool.query(
       `SELECT
-         e.id, e.type, e.created_at, e.is_read, e.coins_awarded,
+         e.id, e.type, e.created_at, e.is_read, e.coins_amount,
          e.related_task_id, t.title AS task_title,
-         e.related_suggestion_id AS related_reward_id, rs.title AS reward_title
+         COALESCE(e.related_suggestion_id, e.related_reward_id) AS related_reward_id,
+         COALESCE(rs.title, r.title) AS reward_title
        FROM events e
        LEFT JOIN tasks t ON t.id = e.related_task_id
        LEFT JOIN reward_suggestions rs ON rs.id = e.related_suggestion_id
+       LEFT JOIN rewards r ON r.id = e.related_reward_id
        WHERE e.child_id = $1
        ORDER BY e.is_read ASC, e.created_at DESC
        LIMIT 200`,

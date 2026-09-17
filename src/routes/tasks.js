@@ -70,7 +70,7 @@ router.patch('/:taskId/confirm', async (req, res) => {
     );
 
     await pool.query(
-      `INSERT INTO events (id, family_id, child_id, type, related_task_id, coins_awarded)
+      `INSERT INTO events (id, family_id, child_id, type, related_task_id, coins_amount)
        VALUES ($1, $2, $3, 'task_confirmed', $4, $5)`,
       [randomUUID(), task.family_id, task.child_id, task.id, task.coin_value]
     );
