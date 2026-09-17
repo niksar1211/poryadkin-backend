@@ -578,12 +578,18 @@ router.patch('/:familyId/reward-suggestions/:suggestionId/accept', async (req, r
       `UPDATE reward_suggestions
        SET status = 'accepted', resolved_at = now()
        WHERE id = $1 AND family_id = $2 AND status = 'pending'
-       RETURNING id`,
+       RETURNING id, child_id`,
       [suggestionId, familyId]
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ status: 'error', message: 'suggestion not found' });
     }
+    const suggestion = result.rows[0];
+    await pool.query(
+      `INSERT INTO events (id, family_id, child_id, type, related_suggestion_id)
+       VALUES ($1, $2, $3, 'reward_approved', $4)`,
+      [randomUUID(), familyId, suggestion.child_id, suggestion.id]
+    );
     res.json({ status: 'ok' });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
@@ -597,12 +603,18 @@ router.patch('/:familyId/reward-suggestions/:suggestionId/reject', async (req, r
       `UPDATE reward_suggestions
        SET status = 'rejected', resolved_at = now()
        WHERE id = $1 AND family_id = $2 AND status = 'pending'
-       RETURNING id`,
+       RETURNING id, child_id`,
       [suggestionId, familyId]
     );
     if (result.rowCount === 0) {
       return res.status(404).json({ status: 'error', message: 'suggestion not found' });
     }
+    const suggestion = result.rows[0];
+    await pool.query(
+      `INSERT INTO events (id, family_id, child_id, type, related_suggestion_id)
+       VALUES ($1, $2, $3, 'reward_declined', $4)`,
+      [randomUUID(), familyId, suggestion.child_id, suggestion.id]
+    );
     res.json({ status: 'ok' });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });

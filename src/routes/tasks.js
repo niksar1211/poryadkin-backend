@@ -47,7 +47,7 @@ router.patch('/:taskId/confirm', async (req, res) => {
       `UPDATE tasks
        SET status = 'confirmed', confirmed_at = now()
        WHERE id = $1 AND status = 'pending_confirmation'
-       RETURNING id, child_id, coin_value`,
+       RETURNING id, family_id, child_id, title, coin_value`,
       [taskId]
     );
 
@@ -59,10 +59,20 @@ router.patch('/:taskId/confirm', async (req, res) => {
 
     const task = result.rows[0];
     const transactionId = randomUUID();
+    // Coins are awarded here, unconditionally — the events insert right
+    // after is just a notification of this already-committed fact. It's
+    // never a gate on the coin_transactions write, and the child's balance
+    // doesn't depend on whether the event/popup was ever created or seen.
     await pool.query(
       `INSERT INTO coin_transactions (id, child_id, task_id, amount, reason)
        VALUES ($1, $2, $3, $4, 'task_reward')`,
       [transactionId, task.child_id, task.id, task.coin_value]
+    );
+
+    await pool.query(
+      `INSERT INTO events (id, family_id, child_id, type, related_task_id, coins_awarded)
+       VALUES ($1, $2, $3, 'task_confirmed', $4, $5)`,
+      [randomUUID(), task.family_id, task.child_id, task.id, task.coin_value]
     );
 
     res.json({ status: 'ok', task_id: task.id, coins_awarded: task.coin_value });
@@ -79,7 +89,7 @@ router.patch('/:taskId/reject', async (req, res) => {
       `UPDATE tasks
        SET status = 'needs_revision'
        WHERE id = $1 AND status = 'pending_confirmation'
-       RETURNING id`,
+       RETURNING id, family_id, child_id`,
       [taskId]
     );
 
@@ -88,6 +98,13 @@ router.patch('/:taskId/reject', async (req, res) => {
         .status(409)
         .json({ status: 'error', message: 'task is not awaiting confirmation' });
     }
+
+    const task = result.rows[0];
+    await pool.query(
+      `INSERT INTO events (id, family_id, child_id, type, related_task_id)
+       VALUES ($1, $2, $3, 'task_needs_rework', $4)`,
+      [randomUUID(), task.family_id, task.child_id, task.id]
+    );
 
     res.json({ status: 'ok' });
   } catch (err) {

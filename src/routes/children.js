@@ -163,10 +163,17 @@ router.post('/:childId/reward-suggestions', async (req, res) => {
     }
 
     const id = randomUUID();
+    const familyId = child.rows[0].family_id;
     await pool.query(
       `INSERT INTO reward_suggestions (id, family_id, child_id, title)
        VALUES ($1, $2, $3, $4)`,
-      [id, child.rows[0].family_id, childId, title]
+      [id, familyId, childId, title]
+    );
+
+    await pool.query(
+      `INSERT INTO events (id, family_id, child_id, type, related_suggestion_id)
+       VALUES ($1, $2, $3, 'reward_proposed', $4)`,
+      [randomUUID(), familyId, childId, id]
     );
 
     res.status(201).json({ suggestion_id: id });
@@ -238,6 +245,72 @@ router.post('/:childId/rewards/:rewardId/redeem', async (req, res) => {
     res.status(500).json({ status: 'error', message: err.message });
   } finally {
     client.release();
+  }
+});
+
+// Newest-first within each bucket, unread bucket entirely before read —
+// matches the "События" screen's own sort (unread first, then read, dates
+// descending within each). related_suggestion_id is aliased to
+// related_reward_id in the response: for reward_proposed/reward_approved/
+// reward_declined the "reward" a child sees is still just a suggestion at
+// this point (accepting one only flips its status — the parent fills out
+// a separate create-reward form afterwards), so reward_suggestions is the
+// only table that actually has a title to join against for those types.
+router.get('/:childId/events', async (req, res) => {
+  try {
+    const { childId } = req.params;
+
+    const child = await pool.query('SELECT id FROM children WHERE id = $1', [childId]);
+    if (child.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'child not found' });
+    }
+
+    const result = await pool.query(
+      `SELECT
+         e.id, e.type, e.created_at, e.is_read, e.coins_awarded,
+         e.related_task_id, t.title AS task_title,
+         e.related_suggestion_id AS related_reward_id, rs.title AS reward_title
+       FROM events e
+       LEFT JOIN tasks t ON t.id = e.related_task_id
+       LEFT JOIN reward_suggestions rs ON rs.id = e.related_suggestion_id
+       WHERE e.child_id = $1
+       ORDER BY e.is_read ASC, e.created_at DESC
+       LIMIT 200`,
+      [childId]
+    );
+
+    res.json({ events: result.rows });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// Marks specific events read rather than "all unread" in one shot, because
+// two different callers need two different scopes: the events screen marks
+// every event it just listed, but the app-foreground celebration popup
+// only ever shows task_confirmed/reward_approved events and must not
+// silently mark unrelated unread events (task_needs_rework, reward_
+// proposed, reward_declined) as read just because the popup happened to
+// be open at the same time.
+router.patch('/:childId/events/mark-read', async (req, res) => {
+  try {
+    const { childId } = req.params;
+    const ids = Array.isArray(req.body?.ids)
+      ? req.body.ids.filter((id) => typeof id === 'string')
+      : [];
+
+    if (ids.length === 0) {
+      return res.status(400).json({ status: 'error', message: 'ids is required' });
+    }
+
+    await pool.query(
+      `UPDATE events SET is_read = true WHERE child_id = $1 AND id = ANY($2::uuid[])`,
+      [childId, ids]
+    );
+
+    res.json({ status: 'ok' });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
