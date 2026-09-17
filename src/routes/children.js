@@ -310,13 +310,21 @@ router.get('/:childId/events', async (req, res) => {
     // has passed, the same event row flips in place to the "archived" type
     // instead of a second row being inserted — it's the same underlying
     // fact (the task was confirmed) aging out of "new", not a second event.
+    //
+    // Gated on is_read = true so this can never race the celebration popup:
+    // a child who doesn't open the app for a couple of days must still see
+    // "Задание подтверждено! +N монет" the next time they do, not find it
+    // silently archived (and un-poppable) before they ever got a chance to.
+    // It only archives an event that's already been read — via the popup,
+    // or by having simply been visible on a prior events-screen visit.
     await pool.query(
       `UPDATE events e
-       SET type = 'task_archived', is_read = true
+       SET type = 'task_archived'
        FROM tasks t
        WHERE e.related_task_id = t.id
          AND e.child_id = $1
          AND e.type = 'task_confirmed'
+         AND e.is_read = true
          AND t.confirmed_at IS NOT NULL
          AND ((t.confirmed_at AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date <
              ((NOW() AT TIME ZONE 'Europe/Moscow') + INTERVAL '1 hour')::date`,
