@@ -24,9 +24,10 @@ router.post('/redeem', async (req, res) => {
     );
 
     if (redeemed.rowCount > 0) {
-      const child = await pool.query('SELECT id, family_id, name FROM children WHERE id = $1', [
-        redeemed.rows[0].child_id,
-      ]);
+      const child = await pool.query(
+        'SELECT id, family_id, name, color_key FROM children WHERE id = $1',
+        [redeemed.rows[0].child_id]
+      );
       const c = child.rows[0];
 
       const token = randomBytes(32).toString('hex');
@@ -36,7 +37,13 @@ router.post('/redeem', async (req, res) => {
         [randomUUID(), hashToken(token), c.family_id, c.id]
       );
 
-      return res.json({ child_id: c.id, family_id: c.family_id, child_name: c.name, token });
+      return res.json({
+        child_id: c.id,
+        family_id: c.family_id,
+        child_name: c.name,
+        color_key: c.color_key,
+        token,
+      });
     }
 
     // Nothing got claimed above — look the code up to say why (404 vs 410).
