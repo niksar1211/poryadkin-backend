@@ -1,8 +1,8 @@
 const express = require('express');
-const { randomUUID } = require('crypto');
+const { randomUUID, randomBytes } = require('crypto');
 
 const pool = require('../db');
-const { authenticate, requireChildParam } = require('../middleware/auth');
+const { authenticate, requireChildParam, hashToken } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -31,6 +31,45 @@ router.post('/:childId/pairing-code', async (req, res) => {
     );
 
     res.status(201).json({ code, expires_at: expiresAt.toISOString() });
+  } catch (err) {
+    res.status(500).json({ status: 'error', message: err.message });
+  }
+});
+
+// "Войти как [Имя]" on the parent's own device — a same-device, no-code
+// shortcut for the shared-device household (the common case for this
+// app's 5-12yo audience), as opposed to pairing-code's separate-device
+// flow. requireChildParam above already only allows this for a parent
+// token whose family owns childId (or, harmlessly, a child token acting
+// on itself) — deliberately no further confirmation/PIN, matching the
+// project's own build-on-trust stance elsewhere.
+router.post('/:childId/direct-login', async (req, res) => {
+  try {
+    const { childId } = req.params;
+
+    const child = await pool.query(
+      'SELECT id, family_id, name, color_key FROM children WHERE id = $1',
+      [childId]
+    );
+    if (child.rowCount === 0) {
+      return res.status(404).json({ status: 'error', message: 'child not found' });
+    }
+    const c = child.rows[0];
+
+    const token = randomBytes(32).toString('hex');
+    await pool.query(
+      `INSERT INTO device_tokens (id, token_hash, family_id, child_id, role)
+       VALUES ($1, $2, $3, $4, 'child')`,
+      [randomUUID(), hashToken(token), c.family_id, c.id]
+    );
+
+    res.json({
+      child_id: c.id,
+      family_id: c.family_id,
+      child_name: c.name,
+      color_key: c.color_key,
+      token,
+    });
   } catch (err) {
     res.status(500).json({ status: 'error', message: err.message });
   }
